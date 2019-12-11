@@ -185,6 +185,15 @@ if [[ $(ip r | grep default | cut -d " " -f5) == "$IFACE" ]]; then
   done
 fi
 
+echo -e "[+] Building the docker image ${GREEN}$DOCKER_IMAGE${NC}..."
+docker build -q --rm -t $DOCKER_IMAGE -f $DOCKER_BUILDFILE . > /dev/null
+if [[ $? -ne 0 ]]; then
+  echo -e "${RED}[ERROR]${NC} Error building ${RED}$DOCKER_IMAGE${NC}. Exiting..."
+  exit 1
+fi
+echo -e "[+] Successfully built docker image: ${GREEN}$DOCKER_IMAGE${NC}"
+
+
 # Check for problematic services
 while true; do
   echo -e "${BLUE}[INFO]${NC} Network services may impact dockerwifi's ability to control radio interfaces"
@@ -201,13 +210,6 @@ while true; do
   esac
 done
 
-echo -e "[+] Building the docker image ${GREEN}$DOCKER_IMAGE${NC}..."
-docker build -q --rm -t $DOCKER_IMAGE -f $DOCKER_BUILDFILE . > /dev/null
-if [[ $? -ne 0 ]]; then
-  echo -e "${RED}[ERROR]${NC} Error building ${RED}$DOCKER_IMAGE${NC}. Exiting..."
-  exit 1
-fi
-echo -e "[+] Successfully built docker image: ${GREEN}$DOCKER_IMAGE${NC}"
 echo -e "${MAGENTA}[!] Executing DockerWIFI...${NC}"
 DOCKER_NAME="dockerwifi_$IFACE"
 docker run -t --rm --name $DOCKER_NAME -e SSID=${SSID} -e AP_ADDR=${AP_ADDR} -e IFACE=${IFACE} -e SUBNET=${SUBNET} --net host --privileged $DOCKER_IMAGE

@@ -16,8 +16,18 @@ git clone https://github.com/wamacdonald89/dockerwifi.git
 
 ## Run
 
+Arguments:
+
+**-i <interface>** 
+
+**--ssid <AP Name>**
+
+**-h** help
+
+**-v** Version
+
 ```bash
-sudo ./dockerwifi -i <interface>
+sudo ./dockerwifi -i <interface> --ssid dockerwifi
 ```
 
 ## Notes

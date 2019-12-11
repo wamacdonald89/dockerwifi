@@ -237,4 +237,4 @@ done
 
 DOCKER_NAME="dockerwifi_$IFACE"
 echo -e "${MAGENTA}[!] Executing container: ${DOCKER_NAME}...${NC}"
-docker run -t --rm --name $DOCKER_NAME -e SSID=${SSID} -e AP_ADDR=${AP_ADDR} -e IFACE=${IFACE} -e SUBNET=${SUBNET} --net host --privileged $DOCKER_IMAGE
+docker run -it --rm --name $DOCKER_NAME -e SSID=${SSID} -e AP_ADDR=${AP_ADDR} -e IFACE=${IFACE} -e SUBNET=${SUBNET} --net host --privileged $DOCKER_IMAGE

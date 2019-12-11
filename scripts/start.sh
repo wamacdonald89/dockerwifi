@@ -1,6 +1,7 @@
 #!/bin/bash -e
 set -e
 # Set colors
+# TODO Figure out why colors don't work :(
 MAGENTA='\e[0;35m'
 RED='\e[0;31m'
 GREEN='\e[0;32m'
@@ -21,8 +22,14 @@ iptables -t nat -D POSTROUTING -s ${SUBNET}/24 -j MASQUERADE > /dev/null 2>&1 ||
 iptables -t nat -A POSTROUTING -s ${SUBNET}/24 -j MASQUERADE
 echo "[INFO] NAT POSTROUTING ${SUBNET}/24 MASQUERADE"
 
+echo "[+] Configuring hostapd..."
+export IFACE=${IFACE}
+cat /etc/hostapd.conf | envsubst > /tmp/hostapd.conf
+cp /tmp/hostapd.conf /etc/hostapd.conf
+rm /tmp/hostapd.conf
 
-echo "[+] Configuring DHCP server .."
+
+echo "[+] Configuring DHCP server..."
 
 cat > "/etc/dhcp/dhcpd.conf" <<EOF
 option domain-name-servers 8.8.8.8, 8.8.4.4;

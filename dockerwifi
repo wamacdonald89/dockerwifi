@@ -1,0 +1,213 @@
+#!/usr/bin/env bash
+
+# Set Colors
+MAGENTA='\e[0;35m'
+RED='\e[0;31m'
+GREEN='\e[0;32m'
+BLUE='\e[0;34m'
+NC='\e[0m'
+
+ARCH=$(uname -m)
+DOCKER_IMAGE=dockerwifi
+DOCKER_BUILDFILE=build/Dockerfile
+SSID=dockerwifi
+AP_ADDR=192.168.254.1
+SUBNET=192.168.254.0
+clear
+
+cat <<EOF
+
+#####   ####   ####  #    # ###### #####  #    # # ###### # 
+#    # #    # #    # #   #  #      #    # #    # # #      # 
+#    # #    # #      ####   #####  #    # #    # # #####  # 
+#    # #    # #      #  #   #      #####  # ## # # #      # 
+#    # #    # #    # #   #  #      #   #  ##  ## # #      # 
+#####   ####   ####  #    # ###### #    # #    # # #      # 
+
+EOF
+
+
+# Check for problematic services
+# Borrowed and modified from #aircrack
+function checkservices() {
+
+  #this test means it errored and said it was busybox since busybox doesn't print without error
+  if (ps -A 2>&1 | grep -q BusyBox)
+  then
+    #busybox in openwrt cannot handle -A but its output by default is -A
+    psopts=""
+  else
+    psopts="-A"
+  fi
+  if ( ps -o comm= 2>&1 | grep -q BusyBox )
+  then
+    #busybox in openwrt cannot handle -o
+    pso="0"
+  else
+    pso="1"
+  fi
+
+  PROCESSES="wpa_action\|wpa_supplicant\|wpa_cli\|dhclient\|ifplugd\|dhcdbd\|dhcpcd\|udhcpc\|NetworkManager\|knetworkmanager\|avahi-autoipd\|avahi-daemon\|wlassistant\|wifibox\|net_applet\|wicd-daemon\|wicd-client\|iwd"
+
+  if [ -x "$(command -v service 2>&1)" ]; then
+    service network-manager stop 2> /dev/null > /dev/null
+    service NetworkManager stop 2> /dev/null > /dev/null
+    service avahi-daemon stop 2> /dev/null > /dev/null
+    while [ $? -eq 1 ]; do
+      # Sometimes avahi is persistent and keeps being restarted by systemd.
+      # It's usually 4 times that it needs to be stopped
+      service avahi-daemon stop 2> /dev/null > /dev/null
+    done
+    service wicd stop 2> /dev/null > /dev/null
+  fi
+
+  unset match
+  if [ "${pso}" = 1 ]; then
+    match="$(ps ${psopts} -o comm= | grep ${PROCESSES} | grep -v grep | wc -l)"
+  elif [ "${pso}" = 0 ]; then
+    #openwrt busybox grep hits on itself so we -v it out
+    match="$(ps ${psopts} | grep ${PROCESSES} | grep -v grep | wc -l)"
+  fi
+  if [ ${match} -gt 0 ]; then
+    printf "[INFO] Found $match processes that could cause trouble.\n"
+  else
+    printf "No interfering processes found\n"
+  fi
+  if [ ${match} -gt 0 ]; then
+    if [ "${pso}" = "1" ]; then
+      ps ${psopts} -o pid=PID -o comm=Name | grep "${PROCESSES}\|PID"
+    else
+      ps ${psopts} | grep "${PROCESSES}\|PID | grep -v grep"
+    fi
+    #we have to use signal 9 because things like nm actually respawn wpa_supplicant too quickly
+    if [ "${pso}" = "1" ]; then
+      for pid in $(ps ${psopts} -o pid= -o comm= | grep ${PROCESSES} | awk '{print $1}'); do
+        kill -9 ${pid}
+      done
+    else
+      for pid in $(ps ${psopts} | grep ${PROCESSES} | grep -v grep | awk '{print $1}'); do
+        kill -9 ${pid}
+      done
+    fi
+  fi
+}
+
+if [ "$EUID" -ne 0 ]; then
+  echo "dockerWIFI requires root. Exiting..."
+  exit
+fi
+
+# get interface
+while test $# -gt 0; do
+  case "$1" in
+    -h|--help)
+      echo "HELP TEXT GOES HERE"
+      exit 0
+      ;;
+    -i|--interface)
+      shift
+      if test $# -gt 0; then
+        export IFACE=$1
+      else
+        echo "Interface required. Exiting..."
+        exit 1
+      fi
+      shift
+      ;;
+    --accept)
+        export ACCEPT=1
+        shift
+        ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+if [ -z "${IFACE}" ]; then
+  echo -e "${RED}[ERROR]${NC} No interface specified. Exiting..."
+  exit 1
+fi
+
+PHY=$(cat /sys/class/net/$IFACE/phy80211/name)
+
+
+# TODO: Check architecture, use custom dockerfile
+
+# Check that docker is installed and running
+$(docker info > /dev/null 2>&1)
+if [[ $? -ne 0 ]]; then
+  echo -e ${RED}[ERROR]${NC} Docker daemon not found. Exiting...
+  exit 1
+fi
+
+echo -e "[+] Docker Service found!"
+
+if ! [ -e /sys/class/net/$IFACE ]; then
+  echo -e "${RED}[ERROR]${NC} The specified interface does not exist. Exiting..."
+  exit 1
+fi
+
+$(iw phy $PHY info | grep -qE "\* AP\s*$")
+if [[ $? -eq 1 ]]; then
+  echo -e "${RED}[ERROR]${NC} $IFACE does not support AP mode. Exiting..."
+  exit 1
+fi
+
+echo -e "[+] Interface ${GREEN}$IFACE${NC} supports ${GREEN}AP${NC} mode"
+CHANNELS=$(iw phy $PHY info | sed -n '/Frequencies/,/^\s*Supported commands:\s*$/{//!p}' | grep -vE "disabled|IR" | grep -oP '\[\K[^]]+' | awk 'BEGIN {ORS=" "} {print}')
+echo -e "[+] Interface supports channels ${GREEN}$CHANNELS${NC}"
+
+# Get current status of card
+MODE=$(iw dev | grep -A5 $IFACE | grep type | cut -d" " -f2)
+if [[ $MODE == "monitor" ]]; then
+  echo -e "${BLUE}[INFO]${NC} Radio mode is set to ${RED}Monitor${NC} mode"
+elif [[ $MODE == "managed" ]]; then
+  echo -e "${BLUE}[INFO]${NC} Radio mode is set to ${RED}Managed${NC} mode"
+elif [[ $MODE == "AP" ]]; then
+  echo -e "[+] Radio mode is set to ${GREEN}AP${NC}"
+else
+  echo -e "${RED}[ERROR]${NC} Unknown interface mode. Exiting..."
+  exit 1
+fi
+
+# Check for route conflict 
+if [[ $(ip r | grep default | cut -d " " -f5) == "$IFACE" ]]; then
+  echo -e "${BLUE}[INFO]${NC} $IFACE configured as your default route.\nInternet connectivity may be impacted while Banhammer is running"
+  while true; do
+    read -p "Do you want to continue? [y/n]" prompt
+      case $prompt in 
+        [Yy]* ) 
+          break;;
+        [Nn]* ) exit;;
+        * ) echo "Please enter y/n";;
+      esac
+  done
+fi
+
+# Check for problematic services
+while true; do
+  echo -e "${BLUE}[INFO]${NC} Network services may impact dockerwifi's ability to control radio interfaces"
+  read -p "Should we identify and kill problematic services first? [y/n]" chk
+  case $chk in
+    [Yy]* )
+      checkservices
+      break
+      ;;
+    [Nn]* )
+      break
+      ;;
+    * ) echo "Please enter y/n";;
+  esac
+done
+
+echo -e "[+] Building the docker image ${GREEN}$DOCKER_IMAGE${NC}..."
+docker build -q --rm -t $DOCKER_IMAGE -f $DOCKER_BUILDFILE . > /dev/null
+if [[ $? -ne 0 ]]; then
+  echo -e "${RED}[ERROR]${NC} Error building ${RED}$DOCKER_IMAGE${NC}. Exiting..."
+  exit 1
+fi
+echo -e "[+] Successfully built docker image: ${GREEN}$DOCKER_IMAGE${NC}"
+echo -e "${MAGENTA}[!] Executing DockerWIFI...${NC}"
+DOCKER_NAME="dockerwifi_$IFACE"
+docker run -t --rm --name $DOCKER_NAME -e SSID=${SSID} -e AP_ADDR=${AP_ADDR} -e IFACE=${IFACE} -e SUBNET=${SUBNET} --net host --privileged $DOCKER_IMAGE

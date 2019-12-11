@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 
 # Set Colors
+PACKAGE=dockerwifi
+VERSION=0.1
+
 MAGENTA='\e[0;35m'
 RED='\e[0;31m'
 GREEN='\e[0;32m'
@@ -10,7 +13,7 @@ NC='\e[0m'
 ARCH=$(uname -m)
 DOCKER_IMAGE=dockerwifi
 DOCKER_BUILDFILE=build/Dockerfile
-SSID=dockerwifi
+SSID=dockerwifi # default
 AP_ADDR=192.168.254.1
 SUBNET=192.168.254.0
 clear
@@ -101,7 +104,15 @@ fi
 while test $# -gt 0; do
   case "$1" in
     -h|--help)
-      echo "HELP TEXT GOES HERE"
+      echo "$PACKAGE - dockerized AP"
+      echo " "
+      echo "$PACKAGE [arguments]"
+      echo " "
+      echo "Argumentss:"
+      echo "-h, --help          show brief help"
+      echo "-i, --interface     specify and interface (required)"
+      echo "--ssid              specify an SSID"
+      echo "--version           print version"
       exit 0
       ;;
     -i|--interface)
@@ -114,10 +125,24 @@ while test $# -gt 0; do
       fi
       shift
       ;;
+    --ssid)
+      shift
+      if test $# -gt 0; then
+        export SSID=$1
+      else
+        echo "SSID argument used but no same was provided. Exiting..."
+        exit 1
+      fi
+      shift
+      ;;
     --accept)
-        export ACCEPT=1
-        shift
-        ;;
+      export ACCEPT=1
+      shift
+      ;;
+    --version)
+      echo $VERSION
+      exit 0
+      ;;
     *)
       break
       ;;
@@ -173,9 +198,9 @@ fi
 
 # Check for route conflict 
 if [[ $(ip r | grep default | cut -d " " -f5) == "$IFACE" ]]; then
-  echo -e "${BLUE}[INFO]${NC} $IFACE configured as your default route.\nInternet connectivity may be impacted while Banhammer is running"
+  echo -e "${BLUE}[INFO]${NC} $IFACE configured as your default route.\nInternet connectivity may be impacted while dockerWIFI is running"
   while true; do
-    read -p "Do you want to continue? [y/n]" prompt
+    read -p "Do you want to continue? [y/n]: " prompt
       case $prompt in 
         [Yy]* ) 
           break;;
@@ -197,7 +222,7 @@ echo -e "[+] Successfully built docker image: ${GREEN}$DOCKER_IMAGE${NC}"
 # Check for problematic services
 while true; do
   echo -e "${BLUE}[INFO]${NC} Network services may impact dockerwifi's ability to control radio interfaces"
-  read -p "Should we identify and kill problematic services first? [y/n]" chk
+  read -p "Should we identify and kill problematic services first? [y/n]: " chk
   case $chk in
     [Yy]* )
       checkservices
@@ -210,6 +235,6 @@ while true; do
   esac
 done
 
-echo -e "${MAGENTA}[!] Executing DockerWIFI...${NC}"
 DOCKER_NAME="dockerwifi_$IFACE"
+echo -e "${MAGENTA}[!] Executing container: ${DOCKER_NAME}...${NC}"
 docker run -t --rm --name $DOCKER_NAME -e SSID=${SSID} -e AP_ADDR=${AP_ADDR} -e IFACE=${IFACE} -e SUBNET=${SUBNET} --net host --privileged $DOCKER_IMAGE

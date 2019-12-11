@@ -11,16 +11,16 @@ NC='\e[0m'
 # unblock wlan
 rfkill unblock wlan
 
-echo "[+] Configuring interface ${IFACE}"
+echo -e "[+] Configuring ${GREEN}${IFACE}${NC} as an Access Point..."
 ip link set ${IFACE} up
 ip addr flush dev ${IFACE}
 ip addr add ${AP_ADDR}/24 dev ${IFACE}
-echo "[INFO] IP Address: ${AP_ADDR}/24"
+echo -e "${BLUE}[INFO]${NC} IP Address: ${GREEN}${AP_ADDR}/24${NC}"
 
 echo "[+] Setting IPTABLES for all interfaces..."
 iptables -t nat -D POSTROUTING -s ${SUBNET}/24 -j MASQUERADE > /dev/null 2>&1 || true
 iptables -t nat -A POSTROUTING -s ${SUBNET}/24 -j MASQUERADE
-echo "[INFO] NAT POSTROUTING ${SUBNET}/24 MASQUERADE"
+echo -e "${BLUE}[INFO]${NC} NAT POSTROUTING ${GREEN}${SUBNET}/24$ MASQUERADE${NC}"
 
 echo "[+] Configuring hostapd..."
 export IFACE=${IFACE}
@@ -39,14 +39,15 @@ subnet ${SUBNET} netmask 255.255.255.0 {
   range ${SUBNET::-1}100 ${SUBNET::-1}200;
 }
 EOF
-echo "[INFO] DNS: 8.8.8.8 8.8.4.4"
-echo "[INFO] NETMASK: 255.255.255.0"
-echo "[INFO] ROUTERS: ${AP_ADDR}"
-echo "[INFO] SUBNET: ${SUBNET} RANGE: 100-200"
+echo -e "${BLUE}[INFO]${NC} DNS: ${GREEN}8.8.8.8 8.8.4.4${NC}"
+echo -e "${BLUE}[INFO]${NC} NETMASK: ${GREEN}255.255.255.0${NC}"
+echo -e "${BLUE}[INFO]${NC} ROUTERS: ${GREEN}${AP_ADDR}${NC}"
+echo -e "${BLUE}[INFO]${NC} SUBNET: ${GREEN}${SUBNET} RANGE: 100-200${NC}"
 
 
 echo "[+] Starting DHCP server .."
 dhcpd ${IFACE} &> /dev/null
 
 echo "Starting HostAP daemon ..."
-/usr/sbin/hostapd /etc/hostapd.conf 
+echo -e "${BLUE}[INFO]${NC} Press CTRL-C to stop..."
+/usr/sbin/hostapd /etc/hostapd.conf

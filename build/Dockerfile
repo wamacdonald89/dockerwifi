@@ -6,6 +6,5 @@ RUN echo "" > /var/lib/dhcp/dhcpd.leases
 ADD configs/default.conf /etc/hostapd.conf
 ADD scripts/start.sh /bin/start.sh
 RUN chmod +x /bin/start.sh
-
 ENTRYPOINT [ "/bin/bash", "/bin/start.sh" ]
 CMD []

@@ -35,6 +35,18 @@ then
   KEYMGT="WEP"
 fi
 
+# Check for SAE
+if grep -q "SAE" /etc/hostapd.conf
+then
+  if grep -q "WPA-PSK" /etc/hostapd.conf
+  then
+    KEYMGT="WPA-PSK SAE (TRANSITION MODE)"
+  else
+    KEYMGT="SAE"
+  fi
+fi
+
+
 # TODO EAP prep
 if [[ $KEYMGT == "EAP" ]]; then
   openssl dhparam 2048 > dhparam.pem
@@ -53,7 +65,12 @@ cp /tmp/hostapd.conf /etc/hostapd.conf
 rm /tmp/hostapd.conf
 
 SSID=$(cat /etc/hostapd.conf | grep "ssid" | cut -d"=" -f2)
-BAND=$(cat /etc/hostapd.conf | grep "hw_mode" | cut -d"=" -f2)
+HW_MODE=$(cat /etc/hostapd.conf | grep "hw_mode" | cut -d"=" -f2)
+if [ $HW_MODE == "a" ]; then
+  BAND="5GHz"
+elif [ $HW_MODE == "g" ]; then
+  BAND="2.4GHz"
+fi
 CHANNEL=$(cat /etc/hostapd.conf | grep "channel" | cut -d"=" -f2)
 PASSPHRASE=$(cat /etc/hostapd.conf | grep -E "wpa_passphrase|wep_key" | cut -d"=" -f2)
 
@@ -67,6 +84,7 @@ subnet ${SUBNET} netmask 255.255.255.0 {
   range ${SUBNET::-1}100 ${SUBNET::-1}200;
 }
 EOF
+
 echo -e "${BLUE}[INFO]${NC} DNS:\t\t${GREEN}8.8.8.8 8.8.4.4${NC}"
 echo -e "${BLUE}[INFO]${NC} NETMASK:\t\t${GREEN}255.255.255.0${NC}"
 echo -e "${BLUE}[INFO]${NC} ROUTERS:\t\t${GREEN}${AP_ADDR}${NC}"
@@ -76,15 +94,15 @@ echo -e "${BLUE}[INFO]${NC} SUBNET:\t\t${GREEN}${SUBNET} RANGE: 100-200${NC}"
 echo "[+] Starting DHCP server .."
 dhcpd ${IFACE} &> /dev/null
 
-echo "Starting HostAP daemon ..."
+echo "[+] Starting HostAP Daemon ..."
 echo -e "${BLUE}[INFO]${NC} Key Mgmt:\t${GREEN}$KEYMGT${NC}"
 echo -e "${BLUE}[INFO]${NC} Interface:\t${GREEN}$IFACE${NC}"
 echo -e "${BLUE}[INFO]${NC} SSID:\t\t${GREEN}$SSID${NC}"
 echo -e "${BLUE}[INFO]${NC} Frequency Band:\t${GREEN}$BAND${NC}"
 echo -e "${BLUE}[INFO]${NC} Channel:\t\t${GREEN}$CHANNEL${NC}"
-if [ $KEYMGT == "PSK" ]; then
+if [[ $KEYMGT == "PSK" ]]; then
   echo -e "${BLUE}[INFO]${NC} Passphrase:\t${GREEN}$PASSPHRASE${NC}"
-elif [ $KEYMGT == "WEP" ]; then
+elif [[ $KEYMGT == "WEP" ]]; then
   echo -e "${BLUE}[INFO]${NC} WEP Key:\t\t${GREEN}$PASSPHRASE${NC}"
 fi
 echo -e "${BLUE}[INFO]${NC} Press CTRL-C to stop..."

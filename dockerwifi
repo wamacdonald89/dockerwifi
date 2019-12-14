@@ -174,7 +174,7 @@ fi
 
 # Check for route conflict 
 if [[ $(ip r | grep default | cut -d " " -f5) == "$IFACE" ]]; then
-  echo -e "${BLUE}[INFO]]${NC} $IFACE configured as your default route."
+  echo -e "${BLUE}[INFO]${NC} $IFACE configured as your default route."
 fi
 
 echo -e "[+] Bringing down network management services..."

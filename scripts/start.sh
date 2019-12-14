@@ -1,7 +1,11 @@
-#!/bin/bash -e
+#!/bin/bash
 set -e
+
+# Defaults
+HW_MODE=g # a,b,g,n
+BAND="2.4GHz"
+
 # Set colors
-# TODO Figure out why colors don't work :(
 MAGENTA='\e[0;35m'
 RED='\e[0;31m'
 GREEN='\e[0;32m'
@@ -10,7 +14,6 @@ NC='\e[0m'
 
 # unblock wlan
 rfkill unblock wlan
-
 echo -e "[+] Configuring ${GREEN}${IFACE}${NC} as an Access Point..."
 ip link set ${IFACE} up
 ip addr flush dev ${IFACE}
@@ -22,8 +25,15 @@ iptables -t nat -D POSTROUTING -s ${SUBNET}/24 -j MASQUERADE > /dev/null 2>&1 ||
 iptables -t nat -A POSTROUTING -s ${SUBNET}/24 -j MASQUERADE
 echo -e "${BLUE}[INFO]${NC} NAT POSTROUTING ${GREEN}${SUBNET}/24$ MASQUERADE${NC}"
 
+
+if [ ${CHANNEL} -gt 14 ]; then
+  HW_MODE=a
+  BAND="5GHz"
+fi
+
 echo "[+] Configuring hostapd..."
 export IFACE=${IFACE}
+export HW_MODE=${HW_MODE}
 cat /etc/hostapd.conf | envsubst > /tmp/hostapd.conf
 cp /tmp/hostapd.conf /etc/hostapd.conf
 rm /tmp/hostapd.conf
@@ -39,15 +49,22 @@ subnet ${SUBNET} netmask 255.255.255.0 {
   range ${SUBNET::-1}100 ${SUBNET::-1}200;
 }
 EOF
-echo -e "${BLUE}[INFO]${NC} DNS: ${GREEN}8.8.8.8 8.8.4.4${NC}"
-echo -e "${BLUE}[INFO]${NC} NETMASK: ${GREEN}255.255.255.0${NC}"
-echo -e "${BLUE}[INFO]${NC} ROUTERS: ${GREEN}${AP_ADDR}${NC}"
-echo -e "${BLUE}[INFO]${NC} SUBNET: ${GREEN}${SUBNET} RANGE: 100-200${NC}"
+echo -e "${BLUE}[INFO]${NC} DNS:\t\t${GREEN}8.8.8.8 8.8.4.4${NC}"
+echo -e "${BLUE}[INFO]${NC} NETMASK:\t\t${GREEN}255.255.255.0${NC}"
+echo -e "${BLUE}[INFO]${NC} ROUTERS:\t\t${GREEN}${AP_ADDR}${NC}"
+echo -e "${BLUE}[INFO]${NC} SUBNET:\t\t${GREEN}${SUBNET} RANGE: 100-200${NC}"
 
 
 echo "[+] Starting DHCP server .."
 dhcpd ${IFACE} &> /dev/null
 
 echo "Starting HostAP daemon ..."
+
+echo -e "${BLUE}[INFO]${NC} Interface:\t${GREEN}$IFACE${NC}"
+echo -e "${BLUE}[INFO]${NC} SSID:\t\t${GREEN}$SSID${NC}"
+echo -e "${BLUE}[INFO]${NC} Frequency Band:\t${GREEN}$BAND${NC}"
+echo -e "${BLUE}[INFO]${NC} Channel:\t\t${GREEN}$CHANNEL${NC}"
+echo -e "${BLUE}[INFO]${NC} Passphrase:\t${GREEN}$PASSPHRASE${NC}"
+
 echo -e "${BLUE}[INFO]${NC} Press CTRL-C to stop..."
 /usr/sbin/hostapd /etc/hostapd.conf

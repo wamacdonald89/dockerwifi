@@ -11,6 +11,7 @@ BLUE='\e[0;34m'
 NC='\e[0m'
 
 ARCH=$(uname -m)
+CONFIG=./configs/default.conf
 DOCKER_IMAGE=dockerwifi
 DOCKER_BUILDFILE=build/Dockerfile
 SSID=dockerwifi # default
@@ -57,6 +58,7 @@ while test $# -gt 0; do
       echo "-c, --channel       channel number"
       echo "--passphrase        passphrase for WPA-PSK APs"
       echo "--ssid              specify an SSID"
+      echo "--config            specify a custom hostapd.conf"
       echo "--version           print version"
       exit 0
       ;;
@@ -96,6 +98,16 @@ while test $# -gt 0; do
         export PASSPHRASE=$1
       else
         echo "Passphrase argument was used but no passphrase was provided. Exiting..."
+        exit 1
+      fi
+      shift
+      ;;
+    --config)
+      shift
+      if test $# -gt 0; then
+        export CONFIG=$1
+      else
+        echo "Config argument was used but no filename was provided. Exiting..."
         exit 1
       fi
       shift
@@ -169,7 +181,7 @@ echo -e "[+] Bringing down network management services..."
 checkservices
 
 echo -e "[+] Building the docker image ${GREEN}$DOCKER_IMAGE${NC}..."
-docker build -q --rm -t $DOCKER_IMAGE -f $DOCKER_BUILDFILE . > /dev/null
+docker build --build-arg CONFIG=${CONFIG} -q --rm -t $DOCKER_IMAGE -f $DOCKER_BUILDFILE . > /dev/null
 if [[ $? -ne 0 ]]; then
   echo -e "${RED}[ERROR]${NC} Error building ${RED}$DOCKER_IMAGE${NC}. Exiting..."
   exit 1

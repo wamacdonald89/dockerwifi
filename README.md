@@ -26,6 +26,8 @@ Arguments:
 
 **--ssid <AP Name>**
 
+**--config** <hostapd.conf>
+
 **-h** help
 
 **-v** Version

@@ -4,7 +4,7 @@ set -e
 # Defaults
 HW_MODE=g # a,b,g,n
 BAND="2.4GHz"
-
+KEYMGT="PSK"
 # Set colors
 MAGENTA='\e[0;35m'
 RED='\e[0;31m'
@@ -31,6 +31,15 @@ if [ ${CHANNEL} -gt 14 ]; then
   BAND="5GHz"
 fi
 
+# TODO EAP prep
+if [[ $KEYMGT == "EAP" ]]; then
+  openssl dhparam 2048 > dhparam.pem
+  openssl genrsa -out server.key 2048
+  openssl req -new -sha256 -key server.key -out csr.csr
+  openssl req -x509 -sha256 -days 365 -key server.key -in csr.csr -out server.pem
+  ln -s server.pem ca.pem
+fi
+
 echo "[+] Configuring hostapd..."
 export IFACE=${IFACE}
 export HW_MODE=${HW_MODE}
@@ -38,6 +47,10 @@ cat /etc/hostapd.conf | envsubst > /tmp/hostapd.conf
 cp /tmp/hostapd.conf /etc/hostapd.conf
 rm /tmp/hostapd.conf
 
+SSID=$(cat /etc/hostapd.conf | grep "ssid" | cut -d"=" -f2)
+BAND=$(cat /etc/hostapd.conf | grep "hw_mode" | cut -d"=" -f2)
+CHANNEL=$(cat /etc/hostapd.conf | grep "channel" | cut -d"=" -f2)
+PASSPHRASE=$(cat /etc/hostapd.conf | grep "wpa_passphrase" | cut -d"=" -f2)
 
 echo "[+] Configuring DHCP server..."
 
@@ -64,7 +77,9 @@ echo -e "${BLUE}[INFO]${NC} Interface:\t${GREEN}$IFACE${NC}"
 echo -e "${BLUE}[INFO]${NC} SSID:\t\t${GREEN}$SSID${NC}"
 echo -e "${BLUE}[INFO]${NC} Frequency Band:\t${GREEN}$BAND${NC}"
 echo -e "${BLUE}[INFO]${NC} Channel:\t\t${GREEN}$CHANNEL${NC}"
-echo -e "${BLUE}[INFO]${NC} Passphrase:\t${GREEN}$PASSPHRASE${NC}"
+if [ $KEYMGT == "PSK" ]; then
+  echo -e "${BLUE}[INFO]${NC} Passphrase:\t${GREEN}$PASSPHRASE${NC}"
+fi
 
 echo -e "${BLUE}[INFO]${NC} Press CTRL-C to stop..."
 /usr/sbin/hostapd /etc/hostapd.conf

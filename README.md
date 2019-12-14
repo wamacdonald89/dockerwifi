@@ -18,9 +18,9 @@ git clone https://github.com/wamacdonald89/dockerwifi.git
 
 Arguments:
 
-**-i|--interface <interface>** (required)
+**-i | --interface <interface>** (required)
 
-**-c|--channel** <ch#>
+**-c | --channel** <ch#>
 
 **--passphrase** <passphrase>
 

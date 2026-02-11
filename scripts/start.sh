@@ -14,14 +14,17 @@ NC='\e[0m'
 # unblock wlan
 rfkill unblock wlan
 echo -e "[+] Configuring ${GREEN}${IFACE}${NC} as an Access Point..."
-ip link set ${IFACE} up
-ip addr flush dev ${IFACE}
-ip addr add ${AP_ADDR}/24 dev ${IFACE}
+ip link set "${IFACE}" up
+ip addr flush dev "${IFACE}"
+ip addr add "${AP_ADDR}/24" dev "${IFACE}"
 echo -e "${BLUE}[INFO]${NC} IP Address: ${GREEN}${AP_ADDR}/24${NC}"
 
+echo "[+] Enabling IP forwarding..."
+echo 1 > /proc/sys/net/ipv4/ip_forward
+
 echo "[+] Setting IPTABLES for all interfaces..."
-iptables -t nat -D POSTROUTING -s ${SUBNET}/24 -j MASQUERADE > /dev/null 2>&1 || true
-iptables -t nat -A POSTROUTING -s ${SUBNET}/24 -j MASQUERADE
+iptables -t nat -D POSTROUTING -s "${SUBNET}/24" -j MASQUERADE > /dev/null 2>&1 || true
+iptables -t nat -A POSTROUTING -s "${SUBNET}/24" -j MASQUERADE
 echo -e "${BLUE}[INFO]${NC} NAT POSTROUTING ${GREEN}${SUBNET}/24$ MASQUERADE${NC}"
 
 if [ ${CHANNEL} -gt 14 ]; then
@@ -58,21 +61,21 @@ fi
 
 
 echo "[+] Configuring hostapd..."
-export IFACE=${IFACE}
-export HW_MODE=${HW_MODE}
-cat /etc/hostapd.conf | envsubst > /tmp/hostapd.conf
+export IFACE="${IFACE}"
+export HW_MODE="${HW_MODE}"
+envsubst '$IFACE $HW_MODE $SSID $CHANNEL $PASSPHRASE' < /etc/hostapd.conf > /tmp/hostapd.conf
 cp /tmp/hostapd.conf /etc/hostapd.conf
 rm /tmp/hostapd.conf
 
-SSID=$(cat /etc/hostapd.conf | grep "ssid" | cut -d"=" -f2)
-HW_MODE=$(cat /etc/hostapd.conf | grep "hw_mode" | cut -d"=" -f2)
-if [ $HW_MODE == "a" ]; then
+SSID=$(grep "^ssid=" /etc/hostapd.conf | cut -d"=" -f2)
+HW_MODE=$(grep "^hw_mode=" /etc/hostapd.conf | cut -d"=" -f2)
+if [ "$HW_MODE" == "a" ]; then
   BAND="5GHz"
-elif [ $HW_MODE == "g" ]; then
+elif [ "$HW_MODE" == "g" ]; then
   BAND="2.4GHz"
 fi
-CHANNEL=$(cat /etc/hostapd.conf | grep "channel" | cut -d"=" -f2)
-PASSPHRASE=$(cat /etc/hostapd.conf | grep -E "wpa_passphrase|wep_key" | cut -d"=" -f2)
+CHANNEL=$(grep "^channel=" /etc/hostapd.conf | cut -d"=" -f2)
+PASSPHRASE=$(grep -E "^wpa_passphrase=|^wep_key=" /etc/hostapd.conf | cut -d"=" -f2)
 
 echo "[+] Configuring DHCP server..."
 
@@ -92,7 +95,7 @@ echo -e "${BLUE}[INFO]${NC} SUBNET:\t\t${GREEN}${SUBNET} RANGE: 100-200${NC}"
 
 
 echo "[+] Starting DHCP server .."
-dhcpd ${IFACE} &> /dev/null
+dhcpd "${IFACE}" &> /dev/null
 
 echo "[+] Starting HostAP Daemon ..."
 echo -e "${BLUE}[INFO]${NC} Key Mgmt:\t${GREEN}$KEYMGT${NC}"

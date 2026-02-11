@@ -19,7 +19,6 @@ PASSPHRASE=password123
 CHANNEL=1 # default
 AP_ADDR=192.168.254.1
 SUBNET=192.168.254.0
-clear
 
 cat <<EOF
 
@@ -36,7 +35,7 @@ EOF
 # Check for problematic services
 # Borrowed and modified from #aircrack
 function checkservices() {
-  systemctl stop network-manager
+  systemctl stop NetworkManager 2>/dev/null || systemctl stop network-manager 2>/dev/null || true
 }
 
 if [ "$EUID" -ne 0 ]; then
@@ -52,7 +51,7 @@ while test $# -gt 0; do
       echo " "
       echo "$PACKAGE [arguments]"
       echo " "
-      echo "Argumentss:"
+      echo "Arguments:"
       echo "-h, --help          show brief help"
       echo "-i, --interface     specify an interface (required)"
       echo "-c, --channel       channel number"
@@ -87,7 +86,7 @@ while test $# -gt 0; do
       if test $# -gt 0; then
         export SSID=$1
       else
-        echo "SSID argument used but no same was provided. Exiting..."
+        echo "SSID argument used but no name was provided. Exiting..."
         exit 1
       fi
       shift
@@ -131,37 +130,35 @@ if [ -z "${IFACE}" ]; then
   exit 1
 fi
 
-PHY=$(cat /sys/class/net/$IFACE/phy80211/name)
+PHY=$(cat /sys/class/net/"$IFACE"/phy80211/name)
 
 # Check that docker is installed and running
-$(docker info > /dev/null 2>&1)
-if [[ $? -ne 0 ]]; then
-  echo -e ${RED}[ERROR]${NC} Docker daemon not found. Exiting...
+if ! docker info > /dev/null 2>&1; then
+  echo -e "${RED}[ERROR]${NC} Docker daemon not found. Exiting..."
   exit 1
 fi
 
 echo -e "[+] Checking Docker Service:\t\t${GREEN}Success${NC}"
 
-if ! [ -e /sys/class/net/$IFACE ]; then
+if ! [ -e /sys/class/net/"$IFACE" ]; then
   echo -e "${RED}[ERROR]${NC} The specified interface does not exist. Exiting..."
   exit 1
 fi
 
-$(iw phy $PHY info | grep -qE "\* AP\s*$")
-if [[ $? -eq 1 ]]; then
+if ! iw phy "$PHY" info | grep -qE "\* AP\s*$"; then
   echo -e "${RED}[ERROR]${NC} $IFACE does not support AP mode. Exiting..."
   exit 1
 fi
 
 echo -e "[+] Checking support for AP Mode:\t${GREEN}Success${NC}"
-CHANNELS=$(iw phy $PHY info | sed -n '/Frequencies/,/^\s*Supported commands:\s*$/{//!p}' | grep -vE "disabled|IR" | grep -oP '\[\K[^]]+' | awk 'BEGIN {ORS=" "} {print}')
+CHANNELS=$(iw phy "$PHY" info | sed -n '/Frequencies/,/^\s*Supported commands:\s*$/{//!p}' | grep -vE "disabled|IR" | grep -oP '\[\K[^]]+' | awk 'BEGIN {ORS=" "} {print}')
 echo -e "[+] Supported Channels: ${GREEN}$CHANNELS${NC}"
 
 # Get current status of card
 MODE=$(iw dev | grep -A5 $IFACE | grep type | cut -d" " -f2)
 if [[ $MODE == "monitor" ]]; then
   echo -e "${BLUE}[INFO]${NC} Radio mode: ${RED}Monitor${NC}"
-  echo -e "${MAGENTA}[!]${NC} Radio will be set tp ${GREEN}AP${NC}"
+  echo -e "${MAGENTA}[!]${NC} Radio will be set to ${GREEN}AP${NC}"
 elif [[ $MODE == "managed" ]]; then
   echo -e "${BLUE}[INFO]${NC} Radio mode: ${RED}Managed${NC}"
   echo -e "${MAGENTA}[!]${NC} Radio will be set to ${GREEN}AP${NC}"
@@ -181,7 +178,7 @@ echo -e "[+] Bringing down network management services..."
 checkservices
 
 echo -e "[+] Building the docker image ${GREEN}$DOCKER_IMAGE${NC}..."
-docker build --build-arg CONFIG=${CONFIG} -q --rm -t $DOCKER_IMAGE -f $DOCKER_BUILDFILE . > /dev/null
+docker build --build-arg CONFIG="${CONFIG}" -q --rm -t "$DOCKER_IMAGE" -f "$DOCKER_BUILDFILE" . > /dev/null
 if [[ $? -ne 0 ]]; then
   echo -e "${RED}[ERROR]${NC} Error building ${RED}$DOCKER_IMAGE${NC}. Exiting..."
   exit 1
@@ -191,6 +188,6 @@ echo -e "[+] Successfully built docker image: ${GREEN}$DOCKER_IMAGE${NC}"
 
 DOCKER_NAME="dockerwifi_$IFACE"
 echo -e "${MAGENTA}[!] Executing container: ${DOCKER_NAME}...${NC}"
-docker run -it --rm --name $DOCKER_NAME -e "TERM=xterm-256color" -e SSID=${SSID} -e PASSPHRASE=${PASSPHRASE} -e CHANNEL=${CHANNEL} -e AP_ADDR=${AP_ADDR} -e IFACE=${IFACE} -e SUBNET=${SUBNET} --net host --privileged $DOCKER_IMAGE
-echo -e "[+] Bringing up network managment services..."
-systemctl restart network-manager
+docker run -it --rm --name "$DOCKER_NAME" -e "TERM=xterm-256color" -e "SSID=${SSID}" -e "PASSPHRASE=${PASSPHRASE}" -e "CHANNEL=${CHANNEL}" -e "AP_ADDR=${AP_ADDR}" -e "IFACE=${IFACE}" -e "SUBNET=${SUBNET}" --net host --privileged "$DOCKER_IMAGE"
+echo -e "[+] Bringing up network management services..."
+systemctl restart NetworkManager 2>/dev/null || systemctl restart network-manager 2>/dev/null || true

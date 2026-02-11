@@ -30,7 +30,7 @@ Arguments:
 
 **-h** help
 
-**-v** Version
+**--version** Version
 
 ```bash
 sudo ./dockerwifi -i <interface> -c 36 --ssid dockerwifi --passphrase dockerwifi 

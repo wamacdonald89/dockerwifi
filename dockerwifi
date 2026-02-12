@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
+set -e
+
+# Resolve script directory for reliable relative paths
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Set Colors
 PACKAGE=dockerwifi
-VERSION=0.1
+VERSION=0.2
 
 MAGENTA='\e[0;35m'
 RED='\e[0;31m'
@@ -11,37 +15,45 @@ BLUE='\e[0;34m'
 NC='\e[0m'
 
 ARCH=$(uname -m)
-CONFIG=./configs/default.conf
+CONFIG="${SCRIPT_DIR}/configs/default.conf"
 DOCKER_IMAGE=dockerwifi
-DOCKER_BUILDFILE=build/Dockerfile
+DOCKER_BUILDFILE="${SCRIPT_DIR}/build/Dockerfile"
 SSID=dockerwifi # default
 PASSPHRASE=password123
+PASSPHRASE_SET=0
 CHANNEL=1 # default
 AP_ADDR=192.168.254.1
 SUBNET=192.168.254.0
-clear
+WPA_MODE=wpa2
+WIFI_GEN=""
 
 cat <<EOF
 
-#####   ####   ####  #    # ###### #####  #    # # ###### # 
-#    # #    # #    # #   #  #      #    # #    # # #      # 
-#    # #    # #      ####   #####  #    # #    # # #####  # 
-#    # #    # #      #  #   #      #####  # ## # # #      # 
-#    # #    # #    # #   #  #      #   #  ##  ## # #      # 
-#####   ####   ####  #    # ###### #    # #    # # #      # 
+#####   ####   ####  #    # ###### #####  #    # # ###### #
+#    # #    # #    # #   #  #      #    # #    # # #      #
+#    # #    # #      ####   #####  #    # #    # # #####  #
+#    # #    # #      #  #   #      #####  # ## # # #      #
+#    # #    # #    # #   #  #      #   #  ##  ## # #      #
+#####   ####   ####  #    # ###### #    # #    # # #      #
 
 EOF
 
+# Cleanup function to restore network services on exit
+function cleanup() {
+  echo -e "\n[+] Cleaning up..."
+  echo -e "[+] Bringing up network management services..."
+  systemctl restart NetworkManager 2>/dev/null || systemctl restart network-manager 2>/dev/null || true
+}
 
 # Check for problematic services
 # Borrowed and modified from #aircrack
 function checkservices() {
-  systemctl stop network-manager
+  systemctl stop NetworkManager 2>/dev/null || systemctl stop network-manager 2>/dev/null || true
 }
 
 if [ "$EUID" -ne 0 ]; then
   echo -e "${RED}[ERROR]${NC} DockerWIFI requires root. Exiting..."
-  exit
+  exit 1
 fi
 
 # get interface
@@ -52,14 +64,40 @@ while test $# -gt 0; do
       echo " "
       echo "$PACKAGE [arguments]"
       echo " "
-      echo "Argumentss:"
+      echo "Arguments:"
       echo "-h, --help          show brief help"
       echo "-i, --interface     specify an interface (required)"
       echo "-c, --channel       channel number"
       echo "--passphrase        passphrase for WPA-PSK APs"
       echo "--ssid              specify an SSID"
       echo "--config            specify a custom hostapd.conf"
+      echo "--wifi              Wi-Fi generation: 4 (n), 5 (ac), 6 (ax)"
+      echo "--wpa3              enable WPA3-SAE authentication"
       echo "--version           print version"
+      echo " "
+      echo "Wi-Fi Generations:"
+      echo "  --wifi 4    802.11n  (2.4GHz or 5GHz, HT)"
+      echo "  --wifi 5    802.11ac (5GHz only, VHT 80MHz)"
+      echo "  --wifi 6    802.11ax (5GHz only, HE)"
+      echo " "
+      echo "  Without --wifi, the legacy 802.11g config is used."
+      echo "  --wifi 5 and --wifi 6 require a 5GHz channel (> 14)."
+      echo " "
+      echo "Custom Config:"
+      echo "  The --config option accepts a hostapd.conf template file."
+      echo "  The following variables are substituted via envsubst:"
+      echo "    \${IFACE}            - wireless interface name"
+      echo "    \${HW_MODE}         - hardware mode (a/b/g)"
+      echo "    \${SSID}            - network name"
+      echo "    \${CHANNEL}         - channel number"
+      echo "    \${PASSPHRASE}      - WPA passphrase"
+      echo "    \${VHT_CENTER_FREQ} - VHT center frequency index (for 80MHz)"
+      echo " "
+      echo "Examples:"
+      echo "  sudo ./$PACKAGE -i wlan0 -c 36 --ssid mynetwork --passphrase s3cureP@ss"
+      echo "  sudo ./$PACKAGE -i wlan0 -c 36 --wifi 5 --passphrase s3cureP@ss"
+      echo "  sudo ./$PACKAGE -i wlan0 -c 36 --wifi 6 --wpa3 --passphrase s3cureP@ss"
+      echo "  sudo ./$PACKAGE -i wlan0 --config /path/to/custom.conf"
       exit 0
       ;;
     -i|--interface)
@@ -87,7 +125,7 @@ while test $# -gt 0; do
       if test $# -gt 0; then
         export SSID=$1
       else
-        echo "SSID argument used but no same was provided. Exiting..."
+        echo "SSID argument used but no name was provided. Exiting..."
         exit 1
       fi
       shift
@@ -96,6 +134,7 @@ while test $# -gt 0; do
       shift
       if test $# -gt 0; then
         export PASSPHRASE=$1
+        PASSPHRASE_SET=1
       else
         echo "Passphrase argument was used but no passphrase was provided. Exiting..."
         exit 1
@@ -112,8 +151,24 @@ while test $# -gt 0; do
       fi
       shift
       ;;
-    --accept)
-      export ACCEPT=1
+    --wifi)
+      shift
+      if test $# -gt 0; then
+        case "$1" in
+          4) CONFIG="${SCRIPT_DIR}/configs/wifi4.conf" ;;
+          5) CONFIG="${SCRIPT_DIR}/configs/wifi5.conf" ;;
+          6) CONFIG="${SCRIPT_DIR}/configs/wifi6.conf" ;;
+          *) echo -e "${RED}[ERROR]${NC} Unsupported Wi-Fi generation: $1. Use 4, 5, or 6. Exiting..."; exit 1 ;;
+        esac
+        export WIFI_GEN=$1
+      else
+        echo "Wi-Fi generation required (4, 5, or 6). Exiting..."
+        exit 1
+      fi
+      shift
+      ;;
+    --wpa3)
+      export WPA_MODE=wpa3
       shift
       ;;
     --version)
@@ -131,37 +186,129 @@ if [ -z "${IFACE}" ]; then
   exit 1
 fi
 
-PHY=$(cat /sys/class/net/$IFACE/phy80211/name)
+# Warn if using the default passphrase
+if [ "$PASSPHRASE_SET" -eq 0 ]; then
+  echo -e "${MAGENTA}[!]${NC} No passphrase specified. Using default passphrase '${RED}password123${NC}'."
+  echo -e "${MAGENTA}[!]${NC} Consider setting a stronger passphrase with --passphrase."
+fi
+
+if ! [ -e /sys/class/net/"$IFACE"/phy80211/name ]; then
+  echo -e "${RED}[ERROR]${NC} Cannot determine PHY for interface $IFACE. Exiting..."
+  exit 1
+fi
+
+PHY=$(cat /sys/class/net/"$IFACE"/phy80211/name)
+
+# Cache PHY info once (used for AP mode, channels, and capability checks)
+PHY_INFO=$(iw phy "$PHY" info)
 
 # Check that docker is installed and running
-$(docker info > /dev/null 2>&1)
-if [[ $? -ne 0 ]]; then
-  echo -e ${RED}[ERROR]${NC} Docker daemon not found. Exiting...
+if ! docker info > /dev/null 2>&1; then
+  echo -e "${RED}[ERROR]${NC} Docker daemon not found. Exiting..."
   exit 1
 fi
 
 echo -e "[+] Checking Docker Service:\t\t${GREEN}Success${NC}"
 
-if ! [ -e /sys/class/net/$IFACE ]; then
+if ! [ -e /sys/class/net/"$IFACE" ]; then
   echo -e "${RED}[ERROR]${NC} The specified interface does not exist. Exiting..."
   exit 1
 fi
 
-$(iw phy $PHY info | grep -qE "\* AP\s*$")
-if [[ $? -eq 1 ]]; then
+if ! echo "$PHY_INFO" | grep -qE "\* AP\s*$"; then
   echo -e "${RED}[ERROR]${NC} $IFACE does not support AP mode. Exiting..."
   exit 1
 fi
 
 echo -e "[+] Checking support for AP Mode:\t${GREEN}Success${NC}"
-CHANNELS=$(iw phy $PHY info | sed -n '/Frequencies/,/^\s*Supported commands:\s*$/{//!p}' | grep -vE "disabled|IR" | grep -oP '\[\K[^]]+' | awk 'BEGIN {ORS=" "} {print}')
+CHANNELS=$(echo "$PHY_INFO" | sed -n '/Frequencies/,/^\s*Supported commands:\s*$/{//!p}' | grep -vE "disabled|IR" | grep -oP '\[\K[^]]+' | awk 'BEGIN {ORS=" "} {print}')
 echo -e "[+] Supported Channels: ${GREEN}$CHANNELS${NC}"
+
+# Validate the selected channel is in the supported list
+CHANNEL_VALID=0
+for ch in $CHANNELS; do
+  if [ "$ch" == "$CHANNEL" ]; then
+    CHANNEL_VALID=1
+    break
+  fi
+done
+
+if [ "$CHANNEL_VALID" -eq 0 ]; then
+  echo -e "${RED}[ERROR]${NC} Channel ${RED}$CHANNEL${NC} is not supported by $IFACE."
+  echo -e "${RED}[ERROR]${NC} Supported channels: $CHANNELS"
+  echo -e "${RED}[ERROR]${NC} Exiting..."
+  exit 1
+fi
+
+# Validate that Wi-Fi 5/6 requires a 5GHz channel
+if [[ "$WIFI_GEN" == "5" || "$WIFI_GEN" == "6" ]] && [ "$CHANNEL" -le 14 ]; then
+  echo -e "${RED}[ERROR]${NC} Wi-Fi $WIFI_GEN requires a 5GHz channel (> 14). Exiting..."
+  exit 1
+fi
+
+# Detect hardware capabilities from PHY info
+HAS_HT=0
+HAS_VHT=0
+HAS_HE=0
+if echo "$PHY_INFO" | grep -q "Capabilities:"; then
+  HAS_HT=1
+fi
+if echo "$PHY_INFO" | grep -q "VHT Capabilities"; then
+  HAS_VHT=1
+fi
+if echo "$PHY_INFO" | grep -qE "HE (Iftypes|MAC Capabilities|PHY Capabilities)"; then
+  HAS_HE=1
+fi
+
+# Report detected capabilities
+HW_CAPS=""
+[ "$HAS_HT" -eq 1 ] && HW_CAPS="${HW_CAPS}n "
+[ "$HAS_VHT" -eq 1 ] && HW_CAPS="${HW_CAPS}ac "
+[ "$HAS_HE" -eq 1 ] && HW_CAPS="${HW_CAPS}ax "
+if [ -n "$HW_CAPS" ]; then
+  echo -e "[+] Hardware capabilities:\t\t${GREEN}${HW_CAPS}${NC}"
+else
+  echo -e "[+] Hardware capabilities:\t\t${BLUE}Legacy (a/b/g)${NC}"
+fi
+
+# Validate hardware capabilities against the requested Wi-Fi generation
+# For --wifi flag, check directly. For --config, scan the config file.
+NEED_HT=0
+NEED_VHT=0
+NEED_HE=0
+
+if [ -n "$WIFI_GEN" ]; then
+  # --wifi flag was used
+  case "$WIFI_GEN" in
+    4) NEED_HT=1 ;;
+    5) NEED_HT=1; NEED_VHT=1 ;;
+    6) NEED_HT=1; NEED_VHT=1; NEED_HE=1 ;;
+  esac
+else
+  # Scan the config file for capability requirements
+  if grep -q "ieee80211n=1" "$CONFIG" 2>/dev/null; then NEED_HT=1; fi
+  if grep -q "ieee80211ac=1" "$CONFIG" 2>/dev/null; then NEED_VHT=1; fi
+  if grep -q "ieee80211ax=1" "$CONFIG" 2>/dev/null; then NEED_HE=1; fi
+fi
+
+if [ "$NEED_HT" -eq 1 ] && [ "$HAS_HT" -eq 0 ]; then
+  echo -e "${RED}[ERROR]${NC} Config requires 802.11n (HT) but $IFACE does not support it. Exiting..."
+  exit 1
+fi
+if [ "$NEED_VHT" -eq 1 ] && [ "$HAS_VHT" -eq 0 ]; then
+  echo -e "${RED}[ERROR]${NC} Config requires 802.11ac (VHT) but $IFACE does not support it. Exiting..."
+  exit 1
+fi
+if [ "$NEED_HE" -eq 1 ] && [ "$HAS_HE" -eq 0 ]; then
+  echo -e "${RED}[ERROR]${NC} Config requires 802.11ax (HE) but $IFACE does not support it. Exiting..."
+  exit 1
+fi
 
 # Get current status of card
 MODE=$(iw dev | grep -A5 $IFACE | grep type | cut -d" " -f2)
 if [[ $MODE == "monitor" ]]; then
   echo -e "${BLUE}[INFO]${NC} Radio mode: ${RED}Monitor${NC}"
-  echo -e "${MAGENTA}[!]${NC} Radio will be set tp ${GREEN}AP${NC}"
+  echo -e "${MAGENTA}[!]${NC} Radio will be set to ${GREEN}AP${NC}"
 elif [[ $MODE == "managed" ]]; then
   echo -e "${BLUE}[INFO]${NC} Radio mode: ${RED}Managed${NC}"
   echo -e "${MAGENTA}[!]${NC} Radio will be set to ${GREEN}AP${NC}"
@@ -172,7 +319,7 @@ else
   exit 1
 fi
 
-# Check for route conflict 
+# Check for route conflict
 if [[ $(ip r | grep default | cut -d " " -f5) == "$IFACE" ]]; then
   echo -e "${BLUE}[INFO]${NC} $IFACE configured as your default route."
 fi
@@ -180,9 +327,12 @@ fi
 echo -e "[+] Bringing down network management services..."
 checkservices
 
+# Register the cleanup trap after stopping NetworkManager
+# so it gets restored even if the script is interrupted
+trap cleanup EXIT
+
 echo -e "[+] Building the docker image ${GREEN}$DOCKER_IMAGE${NC}..."
-docker build --build-arg CONFIG=${CONFIG} -q --rm -t $DOCKER_IMAGE -f $DOCKER_BUILDFILE . > /dev/null
-if [[ $? -ne 0 ]]; then
+if ! docker build --build-arg CONFIG="${CONFIG}" -q --rm -t "$DOCKER_IMAGE" -f "$DOCKER_BUILDFILE" "${SCRIPT_DIR}" > /dev/null; then
   echo -e "${RED}[ERROR]${NC} Error building ${RED}$DOCKER_IMAGE${NC}. Exiting..."
   exit 1
 fi
@@ -191,6 +341,16 @@ echo -e "[+] Successfully built docker image: ${GREEN}$DOCKER_IMAGE${NC}"
 
 DOCKER_NAME="dockerwifi_$IFACE"
 echo -e "${MAGENTA}[!] Executing container: ${DOCKER_NAME}...${NC}"
-docker run -it --rm --name $DOCKER_NAME -e "TERM=xterm-256color" -e SSID=${SSID} -e PASSPHRASE=${PASSPHRASE} -e CHANNEL=${CHANNEL} -e AP_ADDR=${AP_ADDR} -e IFACE=${IFACE} -e SUBNET=${SUBNET} --net host --privileged $DOCKER_IMAGE
-echo -e "[+] Bringing up network managment services..."
-systemctl restart network-manager
+docker run -it --rm --name "$DOCKER_NAME" \
+  --cap-add=NET_ADMIN \
+  --cap-add=NET_RAW \
+  -e "TERM=xterm-256color" \
+  -e "SSID=${SSID}" \
+  -e "PASSPHRASE=${PASSPHRASE}" \
+  -e "CHANNEL=${CHANNEL}" \
+  -e "AP_ADDR=${AP_ADDR}" \
+  -e "IFACE=${IFACE}" \
+  -e "SUBNET=${SUBNET}" \
+  -e "WPA_MODE=${WPA_MODE}" \
+  --net host \
+  "$DOCKER_IMAGE"

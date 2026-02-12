@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Set Colors
 PACKAGE=dockerwifi
-VERSION=0.1
+VERSION=0.2
 
 MAGENTA='\e[0;35m'
 RED='\e[0;31m'
@@ -24,6 +24,8 @@ PASSPHRASE_SET=0
 CHANNEL=1 # default
 AP_ADDR=192.168.254.1
 SUBNET=192.168.254.0
+WPA_MODE=wpa2
+WIFI_GEN=""
 
 cat <<EOF
 
@@ -69,19 +71,32 @@ while test $# -gt 0; do
       echo "--passphrase        passphrase for WPA-PSK APs"
       echo "--ssid              specify an SSID"
       echo "--config            specify a custom hostapd.conf"
+      echo "--wifi              Wi-Fi generation: 4 (n), 5 (ac), 6 (ax)"
+      echo "--wpa3              enable WPA3-SAE authentication"
       echo "--version           print version"
+      echo " "
+      echo "Wi-Fi Generations:"
+      echo "  --wifi 4    802.11n  (2.4GHz or 5GHz, HT)"
+      echo "  --wifi 5    802.11ac (5GHz only, VHT 80MHz)"
+      echo "  --wifi 6    802.11ax (5GHz only, HE)"
+      echo " "
+      echo "  Without --wifi, the legacy 802.11g config is used."
+      echo "  --wifi 5 and --wifi 6 require a 5GHz channel (> 14)."
       echo " "
       echo "Custom Config:"
       echo "  The --config option accepts a hostapd.conf template file."
       echo "  The following variables are substituted via envsubst:"
-      echo "    \${IFACE}       - wireless interface name"
-      echo "    \${HW_MODE}    - hardware mode (a/b/g)"
-      echo "    \${SSID}       - network name"
-      echo "    \${CHANNEL}    - channel number"
-      echo "    \${PASSPHRASE} - WPA passphrase"
+      echo "    \${IFACE}            - wireless interface name"
+      echo "    \${HW_MODE}         - hardware mode (a/b/g)"
+      echo "    \${SSID}            - network name"
+      echo "    \${CHANNEL}         - channel number"
+      echo "    \${PASSPHRASE}      - WPA passphrase"
+      echo "    \${VHT_CENTER_FREQ} - VHT center frequency index (for 80MHz)"
       echo " "
       echo "Examples:"
       echo "  sudo ./$PACKAGE -i wlan0 -c 36 --ssid mynetwork --passphrase s3cureP@ss"
+      echo "  sudo ./$PACKAGE -i wlan0 -c 36 --wifi 5 --passphrase s3cureP@ss"
+      echo "  sudo ./$PACKAGE -i wlan0 -c 36 --wifi 6 --wpa3 --passphrase s3cureP@ss"
       echo "  sudo ./$PACKAGE -i wlan0 --config /path/to/custom.conf"
       exit 0
       ;;
@@ -134,6 +149,26 @@ while test $# -gt 0; do
         echo "Config argument was used but no filename was provided. Exiting..."
         exit 1
       fi
+      shift
+      ;;
+    --wifi)
+      shift
+      if test $# -gt 0; then
+        case "$1" in
+          4) CONFIG="${SCRIPT_DIR}/configs/wifi4.conf" ;;
+          5) CONFIG="${SCRIPT_DIR}/configs/wifi5.conf" ;;
+          6) CONFIG="${SCRIPT_DIR}/configs/wifi6.conf" ;;
+          *) echo -e "${RED}[ERROR]${NC} Unsupported Wi-Fi generation: $1. Use 4, 5, or 6. Exiting..."; exit 1 ;;
+        esac
+        export WIFI_GEN=$1
+      else
+        echo "Wi-Fi generation required (4, 5, or 6). Exiting..."
+        exit 1
+      fi
+      shift
+      ;;
+    --wpa3)
+      export WPA_MODE=wpa3
       shift
       ;;
     --version)
@@ -202,6 +237,12 @@ if [ "$CHANNEL_VALID" -eq 0 ]; then
   exit 1
 fi
 
+# Validate that Wi-Fi 5/6 requires a 5GHz channel
+if [[ "$WIFI_GEN" == "5" || "$WIFI_GEN" == "6" ]] && [ "$CHANNEL" -le 14 ]; then
+  echo -e "${RED}[ERROR]${NC} Wi-Fi $WIFI_GEN requires a 5GHz channel (> 14). Exiting..."
+  exit 1
+fi
+
 # Get current status of card
 MODE=$(iw dev | grep -A5 $IFACE | grep type | cut -d" " -f2)
 if [[ $MODE == "monitor" ]]; then
@@ -249,5 +290,6 @@ docker run -it --rm --name "$DOCKER_NAME" \
   -e "AP_ADDR=${AP_ADDR}" \
   -e "IFACE=${IFACE}" \
   -e "SUBNET=${SUBNET}" \
+  -e "WPA_MODE=${WPA_MODE}" \
   --net host \
   "$DOCKER_IMAGE"

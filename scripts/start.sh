@@ -11,6 +11,20 @@ GREEN='\e[0;32m'
 BLUE='\e[0;34m'
 NC='\e[0m'
 
+# Cleanup function for graceful shutdown
+function cleanup() {
+  echo -e "\n[+] Shutting down..."
+  echo "[+] Removing iptables NAT rules..."
+  iptables -t nat -D POSTROUTING -s "${SUBNET}/24" -j MASQUERADE > /dev/null 2>&1 || true
+  echo "[+] Flushing IP address from ${IFACE}..."
+  ip addr flush dev "${IFACE}" 2>/dev/null || true
+  echo "[+] Disabling IP forwarding..."
+  echo 0 > /proc/sys/net/ipv4/ip_forward 2>/dev/null || true
+  echo "[+] Cleanup complete."
+}
+
+trap cleanup EXIT
+
 # unblock wlan
 rfkill unblock wlan
 echo -e "[+] Configuring ${GREEN}${IFACE}${NC} as an Access Point..."

@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+set -e
+
+# Resolve script directory for reliable relative paths
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Set Colors
 PACKAGE=dockerwifi
@@ -11,26 +15,33 @@ BLUE='\e[0;34m'
 NC='\e[0m'
 
 ARCH=$(uname -m)
-CONFIG=./configs/default.conf
+CONFIG="${SCRIPT_DIR}/configs/default.conf"
 DOCKER_IMAGE=dockerwifi
-DOCKER_BUILDFILE=build/Dockerfile
+DOCKER_BUILDFILE="${SCRIPT_DIR}/build/Dockerfile"
 SSID=dockerwifi # default
 PASSPHRASE=password123
+PASSPHRASE_SET=0
 CHANNEL=1 # default
 AP_ADDR=192.168.254.1
 SUBNET=192.168.254.0
 
 cat <<EOF
 
-#####   ####   ####  #    # ###### #####  #    # # ###### # 
-#    # #    # #    # #   #  #      #    # #    # # #      # 
-#    # #    # #      ####   #####  #    # #    # # #####  # 
-#    # #    # #      #  #   #      #####  # ## # # #      # 
-#    # #    # #    # #   #  #      #   #  ##  ## # #      # 
-#####   ####   ####  #    # ###### #    # #    # # #      # 
+#####   ####   ####  #    # ###### #####  #    # # ###### #
+#    # #    # #    # #   #  #      #    # #    # # #      #
+#    # #    # #      ####   #####  #    # #    # # #####  #
+#    # #    # #      #  #   #      #####  # ## # # #      #
+#    # #    # #    # #   #  #      #   #  ##  ## # #      #
+#####   ####   ####  #    # ###### #    # #    # # #      #
 
 EOF
 
+# Cleanup function to restore network services on exit
+function cleanup() {
+  echo -e "\n[+] Cleaning up..."
+  echo -e "[+] Bringing up network management services..."
+  systemctl restart NetworkManager 2>/dev/null || systemctl restart network-manager 2>/dev/null || true
+}
 
 # Check for problematic services
 # Borrowed and modified from #aircrack
@@ -40,7 +51,7 @@ function checkservices() {
 
 if [ "$EUID" -ne 0 ]; then
   echo -e "${RED}[ERROR]${NC} DockerWIFI requires root. Exiting..."
-  exit
+  exit 1
 fi
 
 # get interface
@@ -59,6 +70,19 @@ while test $# -gt 0; do
       echo "--ssid              specify an SSID"
       echo "--config            specify a custom hostapd.conf"
       echo "--version           print version"
+      echo " "
+      echo "Custom Config:"
+      echo "  The --config option accepts a hostapd.conf template file."
+      echo "  The following variables are substituted via envsubst:"
+      echo "    \${IFACE}       - wireless interface name"
+      echo "    \${HW_MODE}    - hardware mode (a/b/g)"
+      echo "    \${SSID}       - network name"
+      echo "    \${CHANNEL}    - channel number"
+      echo "    \${PASSPHRASE} - WPA passphrase"
+      echo " "
+      echo "Examples:"
+      echo "  sudo ./$PACKAGE -i wlan0 -c 36 --ssid mynetwork --passphrase s3cureP@ss"
+      echo "  sudo ./$PACKAGE -i wlan0 --config /path/to/custom.conf"
       exit 0
       ;;
     -i|--interface)
@@ -95,6 +119,7 @@ while test $# -gt 0; do
       shift
       if test $# -gt 0; then
         export PASSPHRASE=$1
+        PASSPHRASE_SET=1
       else
         echo "Passphrase argument was used but no passphrase was provided. Exiting..."
         exit 1
@@ -111,10 +136,6 @@ while test $# -gt 0; do
       fi
       shift
       ;;
-    --accept)
-      export ACCEPT=1
-      shift
-      ;;
     --version)
       echo $VERSION
       exit 0
@@ -127,6 +148,17 @@ done
 
 if [ -z "${IFACE}" ]; then
   echo -e "${RED}[ERROR]${NC} No interface specified. Exiting..."
+  exit 1
+fi
+
+# Warn if using the default passphrase
+if [ "$PASSPHRASE_SET" -eq 0 ]; then
+  echo -e "${MAGENTA}[!]${NC} No passphrase specified. Using default passphrase '${RED}password123${NC}'."
+  echo -e "${MAGENTA}[!]${NC} Consider setting a stronger passphrase with --passphrase."
+fi
+
+if ! [ -e /sys/class/net/"$IFACE"/phy80211/name ]; then
+  echo -e "${RED}[ERROR]${NC} Cannot determine PHY for interface $IFACE. Exiting..."
   exit 1
 fi
 
@@ -154,6 +186,22 @@ echo -e "[+] Checking support for AP Mode:\t${GREEN}Success${NC}"
 CHANNELS=$(iw phy "$PHY" info | sed -n '/Frequencies/,/^\s*Supported commands:\s*$/{//!p}' | grep -vE "disabled|IR" | grep -oP '\[\K[^]]+' | awk 'BEGIN {ORS=" "} {print}')
 echo -e "[+] Supported Channels: ${GREEN}$CHANNELS${NC}"
 
+# Validate the selected channel is in the supported list
+CHANNEL_VALID=0
+for ch in $CHANNELS; do
+  if [ "$ch" == "$CHANNEL" ]; then
+    CHANNEL_VALID=1
+    break
+  fi
+done
+
+if [ "$CHANNEL_VALID" -eq 0 ]; then
+  echo -e "${RED}[ERROR]${NC} Channel ${RED}$CHANNEL${NC} is not supported by $IFACE."
+  echo -e "${RED}[ERROR]${NC} Supported channels: $CHANNELS"
+  echo -e "${RED}[ERROR]${NC} Exiting..."
+  exit 1
+fi
+
 # Get current status of card
 MODE=$(iw dev | grep -A5 $IFACE | grep type | cut -d" " -f2)
 if [[ $MODE == "monitor" ]]; then
@@ -169,7 +217,7 @@ else
   exit 1
 fi
 
-# Check for route conflict 
+# Check for route conflict
 if [[ $(ip r | grep default | cut -d " " -f5) == "$IFACE" ]]; then
   echo -e "${BLUE}[INFO]${NC} $IFACE configured as your default route."
 fi
@@ -177,9 +225,12 @@ fi
 echo -e "[+] Bringing down network management services..."
 checkservices
 
+# Register the cleanup trap after stopping NetworkManager
+# so it gets restored even if the script is interrupted
+trap cleanup EXIT
+
 echo -e "[+] Building the docker image ${GREEN}$DOCKER_IMAGE${NC}..."
-docker build --build-arg CONFIG="${CONFIG}" -q --rm -t "$DOCKER_IMAGE" -f "$DOCKER_BUILDFILE" . > /dev/null
-if [[ $? -ne 0 ]]; then
+if ! docker build --build-arg CONFIG="${CONFIG}" -q --rm -t "$DOCKER_IMAGE" -f "$DOCKER_BUILDFILE" "${SCRIPT_DIR}" > /dev/null; then
   echo -e "${RED}[ERROR]${NC} Error building ${RED}$DOCKER_IMAGE${NC}. Exiting..."
   exit 1
 fi
@@ -188,6 +239,15 @@ echo -e "[+] Successfully built docker image: ${GREEN}$DOCKER_IMAGE${NC}"
 
 DOCKER_NAME="dockerwifi_$IFACE"
 echo -e "${MAGENTA}[!] Executing container: ${DOCKER_NAME}...${NC}"
-docker run -it --rm --name "$DOCKER_NAME" -e "TERM=xterm-256color" -e "SSID=${SSID}" -e "PASSPHRASE=${PASSPHRASE}" -e "CHANNEL=${CHANNEL}" -e "AP_ADDR=${AP_ADDR}" -e "IFACE=${IFACE}" -e "SUBNET=${SUBNET}" --net host --privileged "$DOCKER_IMAGE"
-echo -e "[+] Bringing up network management services..."
-systemctl restart NetworkManager 2>/dev/null || systemctl restart network-manager 2>/dev/null || true
+docker run -it --rm --name "$DOCKER_NAME" \
+  --cap-add=NET_ADMIN \
+  --cap-add=NET_RAW \
+  -e "TERM=xterm-256color" \
+  -e "SSID=${SSID}" \
+  -e "PASSPHRASE=${PASSPHRASE}" \
+  -e "CHANNEL=${CHANNEL}" \
+  -e "AP_ADDR=${AP_ADDR}" \
+  -e "IFACE=${IFACE}" \
+  -e "SUBNET=${SUBNET}" \
+  --net host \
+  "$DOCKER_IMAGE"

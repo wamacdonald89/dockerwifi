@@ -199,6 +199,9 @@ fi
 
 PHY=$(cat /sys/class/net/"$IFACE"/phy80211/name)
 
+# Cache PHY info once (used for AP mode, channels, and capability checks)
+PHY_INFO=$(iw phy "$PHY" info)
+
 # Check that docker is installed and running
 if ! docker info > /dev/null 2>&1; then
   echo -e "${RED}[ERROR]${NC} Docker daemon not found. Exiting..."
@@ -212,13 +215,13 @@ if ! [ -e /sys/class/net/"$IFACE" ]; then
   exit 1
 fi
 
-if ! iw phy "$PHY" info | grep -qE "\* AP\s*$"; then
+if ! echo "$PHY_INFO" | grep -qE "\* AP\s*$"; then
   echo -e "${RED}[ERROR]${NC} $IFACE does not support AP mode. Exiting..."
   exit 1
 fi
 
 echo -e "[+] Checking support for AP Mode:\t${GREEN}Success${NC}"
-CHANNELS=$(iw phy "$PHY" info | sed -n '/Frequencies/,/^\s*Supported commands:\s*$/{//!p}' | grep -vE "disabled|IR" | grep -oP '\[\K[^]]+' | awk 'BEGIN {ORS=" "} {print}')
+CHANNELS=$(echo "$PHY_INFO" | sed -n '/Frequencies/,/^\s*Supported commands:\s*$/{//!p}' | grep -vE "disabled|IR" | grep -oP '\[\K[^]]+' | awk 'BEGIN {ORS=" "} {print}')
 echo -e "[+] Supported Channels: ${GREEN}$CHANNELS${NC}"
 
 # Validate the selected channel is in the supported list
@@ -240,6 +243,64 @@ fi
 # Validate that Wi-Fi 5/6 requires a 5GHz channel
 if [[ "$WIFI_GEN" == "5" || "$WIFI_GEN" == "6" ]] && [ "$CHANNEL" -le 14 ]; then
   echo -e "${RED}[ERROR]${NC} Wi-Fi $WIFI_GEN requires a 5GHz channel (> 14). Exiting..."
+  exit 1
+fi
+
+# Detect hardware capabilities from PHY info
+HAS_HT=0
+HAS_VHT=0
+HAS_HE=0
+if echo "$PHY_INFO" | grep -q "Capabilities:"; then
+  HAS_HT=1
+fi
+if echo "$PHY_INFO" | grep -q "VHT Capabilities"; then
+  HAS_VHT=1
+fi
+if echo "$PHY_INFO" | grep -qE "HE (Iftypes|MAC Capabilities|PHY Capabilities)"; then
+  HAS_HE=1
+fi
+
+# Report detected capabilities
+HW_CAPS=""
+[ "$HAS_HT" -eq 1 ] && HW_CAPS="${HW_CAPS}n "
+[ "$HAS_VHT" -eq 1 ] && HW_CAPS="${HW_CAPS}ac "
+[ "$HAS_HE" -eq 1 ] && HW_CAPS="${HW_CAPS}ax "
+if [ -n "$HW_CAPS" ]; then
+  echo -e "[+] Hardware capabilities:\t\t${GREEN}${HW_CAPS}${NC}"
+else
+  echo -e "[+] Hardware capabilities:\t\t${BLUE}Legacy (a/b/g)${NC}"
+fi
+
+# Validate hardware capabilities against the requested Wi-Fi generation
+# For --wifi flag, check directly. For --config, scan the config file.
+NEED_HT=0
+NEED_VHT=0
+NEED_HE=0
+
+if [ -n "$WIFI_GEN" ]; then
+  # --wifi flag was used
+  case "$WIFI_GEN" in
+    4) NEED_HT=1 ;;
+    5) NEED_HT=1; NEED_VHT=1 ;;
+    6) NEED_HT=1; NEED_VHT=1; NEED_HE=1 ;;
+  esac
+else
+  # Scan the config file for capability requirements
+  if grep -q "ieee80211n=1" "$CONFIG" 2>/dev/null; then NEED_HT=1; fi
+  if grep -q "ieee80211ac=1" "$CONFIG" 2>/dev/null; then NEED_VHT=1; fi
+  if grep -q "ieee80211ax=1" "$CONFIG" 2>/dev/null; then NEED_HE=1; fi
+fi
+
+if [ "$NEED_HT" -eq 1 ] && [ "$HAS_HT" -eq 0 ]; then
+  echo -e "${RED}[ERROR]${NC} Config requires 802.11n (HT) but $IFACE does not support it. Exiting..."
+  exit 1
+fi
+if [ "$NEED_VHT" -eq 1 ] && [ "$HAS_VHT" -eq 0 ]; then
+  echo -e "${RED}[ERROR]${NC} Config requires 802.11ac (VHT) but $IFACE does not support it. Exiting..."
+  exit 1
+fi
+if [ "$NEED_HE" -eq 1 ] && [ "$HAS_HE" -eq 0 ]; then
+  echo -e "${RED}[ERROR]${NC} Config requires 802.11ax (HE) but $IFACE does not support it. Exiting..."
   exit 1
 fi
 
